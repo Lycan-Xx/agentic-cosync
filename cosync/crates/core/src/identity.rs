@@ -1,5 +1,6 @@
 use crate::error::{CosyncError, Result};
 use ed25519_dalek::{SigningKey, pkcs8::EncodePrivateKey};
+use std::str::FromStr;
 use rand::rngs::OsRng;
 use rcgen::{CertificateParams, DistinguishedName, KeyPair};
 use sha2::{Digest, Sha256};
