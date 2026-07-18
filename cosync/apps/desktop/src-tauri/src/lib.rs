@@ -40,15 +40,23 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            // Device info
             commands::get_device_info,
+            commands::get_device_fingerprint,
             commands::get_connection_state,
+            // Discovery & pairing
             commands::start_discovery,
             commands::stop_discovery,
             commands::pair_with_device,
             commands::unpair_device,
             commands::get_paired_devices,
+            // Clipboard
             commands::get_clipboard_history,
-            commands::get_device_fingerprint,
+            commands::send_clipboard,
+            commands::clear_clipboard_history,
+            // File transfer
+            commands::send_file,
+            commands::open_file_in_folder,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

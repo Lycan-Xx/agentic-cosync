@@ -269,7 +269,20 @@ export function useCosync() {
   const sendFile = useCallback(
     async (filePath: string) => {
       try {
-        await cmd.sendFile(filePath);
+        const result = await cmd.sendFile(filePath);
+        // Add the outgoing transfer to the UI
+        const transfer: FileTransferProgress = {
+          transfer_id: result.transfer_id,
+          file_name: result.file_name,
+          file_size: result.file_size,
+          chunks_received: 0,
+          total_chunks: result.total_chunks,
+          status: "complete",
+        };
+        setState((prev) => ({
+          ...prev,
+          activeTransfers: [transfer, ...prev.activeTransfers],
+        }));
       } catch (e) {
         setState((prev) => ({ ...prev, errorMessage: String(e) }));
       }

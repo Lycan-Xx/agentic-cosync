@@ -37,6 +37,7 @@ pub struct SessionManager {
     state_tx: watch::Sender<ConnectionState>,
     state_rx: watch::Receiver<ConnectionState>,
     event_tx: mpsc::Sender<SessionEvent>,
+    event_rx: Mutex<Option<mpsc::Receiver<SessionEvent>>>,
     connections: Arc<Mutex<HashMap<String, Connection>>>,
     cert_verifier: Arc<PinnedCertVerifier>,
     server_endpoint: Arc<Mutex<Option<quinn::Endpoint>>>,
@@ -55,11 +56,11 @@ impl SessionManager {
             hex::encode(h.finalize())
         };
         let (state_tx, state_rx) = watch::channel(ConnectionState::Idle);
-        let (event_tx, _) = mpsc::channel(256);
+        let (event_tx, event_rx) = mpsc::channel(256);
         let hlc = Arc::new(Mutex::new(HybridLogicalClock::new(fingerprint.clone())));
         Ok(Self {
             device_id: fingerprint, device_name, cert_der, key_der, hlc, storage,
-            state_tx, state_rx, event_tx,
+            state_tx, state_rx, event_tx, event_rx: Mutex::new(Some(event_rx)),
             connections: Arc::new(Mutex::new(HashMap::new())),
             cert_verifier: Arc::new(PinnedCertVerifier::new()),
             server_endpoint: Arc::new(Mutex::new(None)),
@@ -70,6 +71,29 @@ impl SessionManager {
     }
 
     pub fn state_receiver(&self) -> watch::Receiver<ConnectionState> { self.state_rx.clone() }
+
+    /// Takes the event receiver. Can only be called once; returns `None` on subsequent calls.
+    /// Consumers (e.g. Tauri backend) use this to forward `SessionEvent`s to the frontend.
+    pub async fn take_event_receiver(&self) -> Option<mpsc::Receiver<SessionEvent>> {
+        self.event_rx.lock().await.take()
+    }
+
+    /// Returns this device's fingerprint (SHA-256 of the public key).
+    pub fn device_id(&self) -> &str { &self.device_id }
+
+    /// Returns a clone of the HLC handle for creating timestamps.
+    pub fn hlc(&self) -> Arc<Mutex<HybridLogicalClock>> { self.hlc.clone() }
+
+    /// Returns a clone of the storage handle for querying DB.
+    pub fn storage(&self) -> Arc<Storage> { self.storage.clone() }
+
+    /// Returns a clone of the file transfer manager.
+    pub fn file_transfer(&self) -> Arc<FileTransferManager> { self.file_transfer.clone() }
+
+    /// Returns the list of connected peer fingerprints.
+    pub async fn connected_peers(&self) -> Vec<String> {
+        self.connections.lock().await.keys().cloned().collect()
+    }
 
     pub async fn start_server(&self, bind_addr: SocketAddr) -> Result<()> {
         let endpoint = create_server_endpoint(bind_addr, self.cert_der.clone(), self.key_der.clone())?;

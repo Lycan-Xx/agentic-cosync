@@ -762,6 +762,7 @@ name = "cosync-desktop"
 version = "0.1.0"
 dependencies = [
  "cosync-core",
+ "hex",
  "hostname",
  "serde",
  "serde_json",

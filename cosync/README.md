@@ -49,27 +49,29 @@ apps/desktop/
 +-- index.html                # Vite entry point
 +-- src/                      # React frontend
 |   +-- main.tsx              # ReactDOM render
-|   +-- App.tsx               # Root component + layout
+|   +-- App.tsx               # Root component — tabbed layout (Devices / Clipboard / Files)
 |   +-- styles.css            # Tailwind v4 + dark theme
 |   +-- hooks/
-|   |   +-- useCosync.ts      # Core state hook (discovery, pairing, events)
+|   |   +-- useCosync.ts      # Core state hook — discovery, pairing, events, clipboard, files
 |   +-- lib/
-|   |   +-- commands.ts       # Typed Tauri IPC wrappers
+|   |   +-- commands.ts       # Typed Tauri IPC wrappers (12 commands)
 |   +-- types/
-|   |   +-- events.ts         # Shared Rust↔TS type definitions
+|   |   +-- events.ts         # Shared Rust↔TS type definitions (FrontendEvent tagged union)
 |   +-- components/
 |       +-- ui.tsx            # StatusBadge, DeviceCard, PeerList, ErrorBanner
+|       +-- ClipboardPanel.tsx # Clipboard send bar + history list + copy-to-clipboard
+|       +-- FileTransferPanel.tsx # Drag-and-drop file picker + transfer progress + open-in-folder
 +-- src-tauri/                # Rust backend (Tauri crate)
-    +-- Cargo.toml            # Depends on cosync-core + tauri + plugins
+    +-- Cargo.toml            # Depends on cosync-core + tauri + plugins + hex
     +-- build.rs              # tauri_build::build()
     +-- tauri.conf.json       # App config, window, bundle settings
     +-- capabilities/
     |   +-- default.json      # Tauri v2 permission grants
     +-- src/
         +-- main.rs           # Entry point (windows_subsystem = "windows" on release)
-        +-- lib.rs            # Tauri builder: plugins, state, commands, setup
-        +-- commands.rs       # #[tauri::command] IPC handlers
-        +-- state.rs          # Managed state (DeviceIdentity, SessionManager, etc.)
+        +-- lib.rs            # Tauri builder: plugins, state, 12 commands, setup
+        +-- commands.rs       # #[tauri::command] IPC handlers — full clipboard + file + pairing impl
+        +-- state.rs          # Managed state (DeviceIdentity, SessionManager, Storage, event forwarding)
 ```
 
 ### How it works (for web developers new to Tauri)
@@ -290,6 +292,49 @@ cosync/
 | M5 | Clipboard sync + monitor | Done |
 | M6 | File transfer (chunked) | Done |
 | M7 | Notification mirroring | Done |
-| M8 | Desktop app (Tauri v2 + React) | In progress |
+| M8 | Desktop app (Tauri v2 + React) | Done |
 | M9 | Mobile app (RN + UniFFI) | Planned |
 | M10 | E2E testing + polish | Deferred |
+
+## Desktop App — Registered IPC Commands
+
+The Tauri backend exposes 12 commands to the React frontend via `invoke()`:
+
+| Command | Description |
+|---|---|
+| `get_device_info` | Returns device name + SHA-256 fingerprint |
+| `get_device_fingerprint` | Returns just the fingerprint |
+| `get_connection_state` | Returns the current `ConnectionState` as a string |
+| `start_discovery` | Starts mDNS browse, QUIC server, and event forwarding |
+| `stop_discovery` | Shuts down the session + discovery service |
+| `pair_with_device(ip, port, fp)` | Initiates QUIC pairing with a discovered peer |
+| `unpair_device(device_id)` | Removes a device from the paired devices DB |
+| `get_paired_devices` | Lists all previously paired devices from SQLite |
+| `get_clipboard_history` | Returns the last 100 clipboard entries from SQLite |
+| `send_clipboard(content)` | Broadcasts a text clipboard entry to all connected peers |
+| `clear_clipboard_history` | Deletes all clipboard history from SQLite |
+| `send_file(file_path)` | Chunks and streams a file to all connected peers |
+| `open_file_in_folder(path)` | Opens the system file manager at the file's location |
+
+### Event Flow
+
+Rust emits typed events on the `cosync://event` channel. The React `useCosync()` hook listens and updates state:
+
+```
+SessionEvent (Rust)  →  FrontendEvent (serde)  →  Tauri emit  →  listen()  →  setState()
+     │                        │                       │              │            │
+     ClipboardReceived    ClipboardReceived         emit         .on()     history++
+     FileIncoming         FileIncoming              emit         .on()     transfers++
+     FileProgress         FileProgress              emit         .on()     progress%
+     FileComplete         FileComplete              emit         .on()     status
+     PeerPaired           PairingRequest            emit         .on()     (auto-accept in future)
+     Error                Error                     emit         .on()     error banner
+```
+
+### UI Tabs
+
+The app has three tabs in the main content area:
+
+1. **Devices** — Start/stop mDNS scanning, view discovered peers, initiate pairing
+2. **Clipboard** — Send text to paired devices, view sync history, copy entries locally, clear history
+3. **Files** — Send files via system file picker or drag-and-drop, view transfer progress, open completed files in system folder

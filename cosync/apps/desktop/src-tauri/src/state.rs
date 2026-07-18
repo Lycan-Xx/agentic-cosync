@@ -1,4 +1,4 @@
-use cosync_core::{ConnectionState, DeviceIdentity, DiscoveryService, SessionManager};
+use cosync_core::{ConnectionState, DeviceIdentity, DiscoveryService, SessionEvent, SessionManager, Storage};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -14,7 +14,9 @@ pub struct CosyncState {
     pub discovery: Arc<Mutex<Option<DiscoveryService>>>,
     /// The current connection state, readable by the frontend.
     pub connection_state: Arc<Mutex<ConnectionState>>,
-    /// Path to the app data directory (for identity + database storage).
+    /// SQLite storage — always available, even before a session is started.
+    pub storage: Arc<Storage>,
+    /// Path to the app data directory (for identity + database storage + received files).
     pub app_data_dir: Arc<Mutex<PathBuf>>,
 }
 
@@ -26,13 +28,72 @@ impl CosyncState {
         let identity = DeviceIdentity::load_or_create(&data_dir, &get_hostname())
             .expect("Failed to load or create device identity");
 
+        let storage =
+            Storage::open(&data_dir.join("cosync.db")).expect("Failed to open storage");
+
         Self {
             identity: Arc::new(Mutex::new(identity)),
             session_manager: Arc::new(Mutex::new(None)),
             discovery: Arc::new(Mutex::new(None)),
             connection_state: Arc::new(Mutex::new(ConnectionState::Idle)),
+            storage: Arc::new(storage),
             app_data_dir: Arc::new(Mutex::new(data_dir)),
         }
+    }
+}
+
+/// Converts a core `SessionEvent` into a `FrontendEvent` for the JS frontend.
+pub async fn session_event_to_frontend(fe: SessionEvent) -> crate::commands::FrontendEvent {
+    match fe {
+        SessionEvent::StateChanged(cs) => crate::commands::FrontendEvent::ConnectionStateChanged {
+            state: format!("{:?}", cs),
+        },
+        SessionEvent::ClipboardReceived { content, content_type, source } => {
+            let text = if content_type.starts_with("text/") {
+                String::from_utf8_lossy(&content).to_string()
+            } else {
+                format!("[{} attachment, {} bytes]", content_type, content.len())
+            };
+            crate::commands::FrontendEvent::ClipboardReceived {
+                content: text,
+                source,
+            }
+        }
+        SessionEvent::FileIncoming { transfer_id, file_name, file_size } => {
+            crate::commands::FrontendEvent::FileIncoming {
+                transfer_id,
+                file_name,
+                file_size,
+            }
+        }
+        SessionEvent::FileProgress { transfer_id, chunk_index, total_chunks } => {
+            crate::commands::FrontendEvent::FileProgress {
+                transfer_id,
+                chunk_index,
+                total_chunks,
+            }
+        }
+        SessionEvent::FileComplete { transfer_id, success, path } => {
+            crate::commands::FrontendEvent::FileComplete {
+                transfer_id,
+                success,
+                path,
+            }
+        }
+        SessionEvent::NotificationReceived { package_name, title, text } => {
+            crate::commands::FrontendEvent::NotificationReceived {
+                package_name,
+                title,
+                text,
+            }
+        }
+        SessionEvent::PeerPaired { device_name, fingerprint } => {
+            crate::commands::FrontendEvent::PairingRequest {
+                device_name,
+                fingerprint,
+            }
+        }
+        SessionEvent::Error(msg) => crate::commands::FrontendEvent::Error { message: msg },
     }
 }
 
@@ -43,6 +104,3 @@ fn get_hostname() -> String {
         .and_then(|h| h.into_string().ok())
         .unwrap_or_else(|| "cosync-device".to_string())
 }
-
-// We need the `hostname` crate for getting the machine name.
-// It's a tiny crate (no dependencies) so we add it to Cargo.toml.

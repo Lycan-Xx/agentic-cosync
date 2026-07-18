@@ -1,6 +1,7 @@
 import { useState, useRef } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import type { FileTransferProgress } from "../types/events";
+import * as cmd from "../lib/commands";
 
 interface FileTransferPanelProps {
   transfers: FileTransferProgress[];
@@ -42,6 +43,16 @@ function TransferRow({
       : transfer.status === "complete"
         ? "Complete"
         : "Failed";
+
+  const handleOpenInFolder = async () => {
+    if (transfer.path) {
+      try {
+        await cmd.openFileInFolder(transfer.path);
+      } catch {
+        // Silently fail — the OS may not support this
+      }
+    }
+  };
 
   return (
     <div className="flex items-center gap-3 rounded-lg border border-white/5 bg-white/[0.02] px-3 py-2.5 transition-colors hover:bg-white/5">
@@ -94,18 +105,31 @@ function TransferRow({
         )}
       </div>
 
-      {/* Dismiss */}
+      {/* Actions */}
       {(transfer.status === "complete" || transfer.status === "error") && (
-        <button
-          onClick={() => onDismiss(transfer.transfer_id)}
-          className="shrink-0 rounded-md p-1 text-gray-500 transition-colors hover:bg-white/10 hover:text-gray-300"
-          title="Dismiss"
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <line x1="18" y1="6" x2="6" y2="18" />
-            <line x1="6" y1="6" x2="18" y2="18" />
-          </svg>
-        </button>
+        <div className="flex shrink-0 items-center gap-1">
+          {transfer.status === "complete" && transfer.path && (
+            <button
+              onClick={handleOpenInFolder}
+              className="rounded-md p-1 text-gray-500 transition-colors hover:bg-white/10 hover:text-gray-300"
+              title="Open in folder"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+              </svg>
+            </button>
+          )}
+          <button
+            onClick={() => onDismiss(transfer.transfer_id)}
+            className="rounded-md p-1 text-gray-500 transition-colors hover:bg-white/10 hover:text-gray-300"
+            title="Dismiss"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
+        </div>
       )}
     </div>
   );
