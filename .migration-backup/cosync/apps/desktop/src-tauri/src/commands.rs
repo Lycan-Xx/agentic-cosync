@@ -2,7 +2,7 @@ use cosync_core::{
     ConnectionState, DeviceIdentity, DiscoveryService, HlcTimestamp, SessionEvent,
     SessionManager, Storage,
 };
-use ed25519_dalek::pkcs8::EncodePrivateKey;
+use ed25519_dalek::pkcs8::EncodePrivateKey as _;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -113,10 +113,10 @@ pub async fn start_discovery(
 
     // Start QUIC server on a random port
     let bind_addr: std::net::SocketAddr = "0.0.0.0:0".parse().unwrap();
-    session.start_server(bind_addr).map_err(|e| e.to_string())?;
+    session.start_server(bind_addr).await.map_err(|e| e.to_string())?;
 
     // Take the event receiver BEFORE storing the session, so we can forward events
-    let event_rx = session
+    let mut event_rx = session
         .take_event_receiver()
         .await
         .ok_or("Event receiver already taken")?;
@@ -162,7 +162,7 @@ pub async fn start_discovery(
     let conn_state = state.connection_state.clone();
     tokio::spawn(async move {
         let disc_guard = disc_clone.lock().await;
-        if let Some(ref discovery) = *disc_guard {
+        if let Some(discovery) = disc_guard.as_ref() {
             match discovery.browse() {
                 Ok(mut peer_rx) => {
                     drop(disc_guard);
@@ -204,7 +204,7 @@ pub async fn stop_discovery(state: State<'_, CosyncState>) -> Result<(), String>
     *sm = None;
 
     let mut disc = state.discovery.lock().await;
-    if let Some(ref discovery) = *disc {
+    if let Some(discovery) = disc.as_ref() {
         discovery.shutdown().map_err(|e| e.to_string())?;
     }
     *disc = None;

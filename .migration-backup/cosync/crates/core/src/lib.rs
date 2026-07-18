@@ -13,11 +13,13 @@ pub mod storage;
 pub mod transport;
 pub mod wire;
 
+pub use discovery::DiscoveryService;
 pub use error::CosyncError;
 pub use hlc::{HlcTimestamp, HybridLogicalClock};
 pub use identity::DeviceIdentity;
 pub use session::{SessionEvent, SessionManager};
 pub use state::ConnectionState;
+pub use storage::Storage;
 
 #[cfg(feature = "mobile-bindings")]
 uniffi::setup_scaffolding!();

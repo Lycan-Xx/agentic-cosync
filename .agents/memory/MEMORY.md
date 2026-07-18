@@ -1,0 +1,1 @@
+- [Cosync Tauri v2 build setup](cosync-tauri-build.md) — 9 fixes needed to build the Tauri desktop app on Replit Linux; icons must be RGBA PNG.
