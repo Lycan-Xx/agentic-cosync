@@ -20,6 +20,32 @@ export interface DiscoveredPeerView {
   port: number;
 }
 
+export interface ClipboardEntry {
+  id: number;
+  content: string;
+  content_type: string;
+  source_device_id: string | null;
+  created_at: string;
+}
+
+export interface FileTransferProgress {
+  transfer_id: string;
+  file_name: string;
+  file_size: number;
+  chunks_received: number;
+  total_chunks: number;
+  status: "incoming" | "complete" | "error";
+  path?: string;
+  error?: string;
+}
+
+export interface SendFileResult {
+  transfer_id: string;
+  file_name: string;
+  file_size: number;
+  total_chunks: number;
+}
+
 /**
  * Tagged union emitted on `cosync://event`.
  * Mirrors the Rust `FrontendEvent` enum exactly.

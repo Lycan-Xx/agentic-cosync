@@ -1,5 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { DeviceInfo, PairedDeviceView } from "../types/events";
+import type {
+  DeviceInfo,
+  PairedDeviceView,
+  ClipboardEntry,
+  SendFileResult,
+} from "../types/events";
 
 /** Rust Tauri commands — typed wrappers around `invoke`. */
 
@@ -43,6 +48,30 @@ export async function getPairedDevices(): Promise<PairedDeviceView[]> {
   return invoke<PairedDeviceView[]>("get_paired_devices");
 }
 
-export async function getClipboardHistory(): Promise<string[]> {
-  return invoke<string[]>("get_clipboard_history");
+// ── Clipboard commands ──────────────────────────────────────────
+
+export async function getClipboardHistory(): Promise<ClipboardEntry[]> {
+  return invoke<ClipboardEntry[]>("get_clipboard_history");
+}
+
+export async function sendClipboard(content: string): Promise<void> {
+  return invoke<void>("send_clipboard", { content });
+}
+
+export async function deleteClipboardEntry(id: number): Promise<void> {
+  return invoke<void>("delete_clipboard_entry", { id });
+}
+
+export async function clearClipboardHistory(): Promise<void> {
+  return invoke<void>("clear_clipboard_history");
+}
+
+// ── File transfer commands ───────────────────────────────────────
+
+export async function sendFile(filePath: string): Promise<SendFileResult> {
+  return invoke<SendFileResult>("send_file", { filePath });
+}
+
+export async function openFileInFolder(filePath: string): Promise<void> {
+  return invoke<void>("open_file_in_folder", { filePath });
 }
