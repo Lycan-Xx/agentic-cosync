@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/core"]
+members = ["crates/core", "apps/desktop/src-tauri"]
 
 [workspace.dependencies]
 tokio = { version = "1", features = ["full"] }
