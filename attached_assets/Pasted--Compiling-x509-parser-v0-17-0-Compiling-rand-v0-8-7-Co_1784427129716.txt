@@ -1,0 +1,35 @@
+   Compiling x509-parser v0.17.0
+   Compiling rand v0.8.7
+   Compiling ed25519-dalek v2.2.0
+error: failed to run custom build command for `cosync-core v0.1.0 (D:\a\agentic-cosync\agentic-cosync\crates\core)`
+Caused by:
+  process didn't exit successfully: `D:\a\agentic-cosync\agentic-cosync\target\release\build\cosync-core-22f8cea3b9cd3565\build-script-build` (exit code: 101)
+  --- stdout
+  cargo:rerun-if-changed=D:\a\agentic-cosync\agentic-cosync\proto/cosync.proto
+  --- stderr
+  thread 'main' (8636) panicked at crates\core\build.rs:15:10:
+  Failed to compile protobuf definitions: Custom { kind: NotFound, error: "Could not find `protoc`. If `protoc` is installed, try setting the `PROTOC` environment variable to the path of the `protoc` binary. Try installing `protobuf-compiler` or `protobuf` using your package manager. It is also available at https://github.com/protocolbuffers/protobuf/releases  For more information: https://docs.rs/prost-build/#sourcing-protoc" }
+  note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+warning: build failed, waiting for other jobs to finish...
+failed to build app: failed to build app
+       Error failed to build app: failed to build app
+Error: Process completed with exit code 1.
+0s
+0s
+0s
+2s
+Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+Post job cleanup.
+"C:\Program Files\Git\bin\git.exe" version
+git version 2.55.0.windows.2
+Temporarily overriding HOME='D:\a\_temp\6c0335b3-5025-42f8-8535-8acd20f701bd' before making global git config changes
+Adding repository directory to the temporary git global config as a safe directory
+"C:\Program Files\Git\bin\git.exe" config --global --add safe.directory D:\a\agentic-cosync\agentic-cosync
+"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp core\.sshCommand
+"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "sh -c \"git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :\""
+"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+http.https://github.com/.extraheader
+"C:\Program Files\Git\bin\git.exe" config --local --unset-all http.https://github.com/.extraheader
+"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "sh -c \"git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :\""
+"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp ^includeIf\.gitdir:
+"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "git config --local --show-origin --name-only --get-regexp remote.origin.url"
