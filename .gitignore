@@ -30,3 +30,5 @@ apps/desktop/src-tauri/gen/
 
 # ── Migration backup (large, not part of the committed project) ───────────────
 .migration-backup/
+
+.github/
