@@ -1,0 +1,76 @@
+
+1s
+Sun, 19 Jul 2026 01:34:53 GMT Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+Sun, 19 Jul 2026 01:34:53 GMT
+Run actions/cache@v4
+Sun, 19 Jul 2026 01:34:53 GMT (node:9164) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+Sun, 19 Jul 2026 01:34:53 GMT (Use `node --trace-deprecation ...` to show where the warning was created)
+Sun, 19 Jul 2026 01:34:54 GMT Cache not found for input keys: Windows-cargo-5811e975e5983b600be4fab4528dcf5cbc5e6fba57267a4e41c91305ae676b15, Windows-cargo-
+7s
+Sun, 19 Jul 2026 01:34:54 GMT Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+Sun, 19 Jul 2026 01:34:54 GMT
+Run actions/setup-node@v4
+Sun, 19 Jul 2026 01:34:54 GMT   
+Sun, 19 Jul 2026 01:34:54 GMT Attempting to download 20...
+Sun, 19 Jul 2026 01:34:54 GMT (node:4672) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+Sun, 19 Jul 2026 01:34:54 GMT (Use `node --trace-deprecation ...` to show where the warning was created)
+Sun, 19 Jul 2026 01:34:54 GMT Acquiring 20.20.2 - x64 from https://github.com/actions/node-versions/releases/download/20.20.2-23521894959/node-20.20.2-win32-x64.7z
+Sun, 19 Jul 2026 01:34:55 GMT Extracting ...
+Sun, 19 Jul 2026 01:34:57 GMT Adding to the cache ...
+Sun, 19 Jul 2026 01:35:00 GMT
+Environment details
+Sun, 19 Jul 2026 01:35:01 GMT C:\Windows\system32\cmd.exe /D /S /C "C:\hostedtoolcache\windows\node\20.20.2\x64\npm.cmd config get cache"
+Sun, 19 Jul 2026 01:35:01 GMT C:\npm\cache
+Sun, 19 Jul 2026 01:35:01 GMT npm cache is not found
+1m 17s
+Sun, 19 Jul 2026 01:35:02 GMT
+Run npm ci
+Sun, 19 Jul 2026 01:35:02 GMT   npm ci
+Sun, 19 Jul 2026 01:35:02 GMT   shell: C:\Program Files\PowerShell\7\pwsh.EXE -command ". '{0}'"
+Sun, 19 Jul 2026 01:35:02 GMT   env:
+Sun, 19 Jul 2026 01:35:02 GMT     CARGO_HOME: C:\Users\runneradmin\.cargo
+Sun, 19 Jul 2026 01:35:02 GMT     CARGO_INCREMENTAL: 0
+Sun, 19 Jul 2026 01:35:02 GMT     CARGO_TERM_COLOR: always
+Sun, 19 Jul 2026 01:35:02 GMT   
+Sun, 19 Jul 2026 01:36:17 GMT npm warn cleanup Failed to remove some directories [
+Sun, 19 Jul 2026 01:36:17 GMT npm warn cleanup   [
+Sun, 19 Jul 2026 01:36:17 GMT npm warn cleanup     'D:\\a\\agentic-cosync\\agentic-cosync\\apps\\desktop\\node_modules\\@babel',
+Sun, 19 Jul 2026 01:36:17 GMT npm warn cleanup     [Error: EPERM: operation not permitted, rmdir 'D:\a\agentic-cosync\agentic-cosync\apps\desktop\node_modules\@babel\types\lib\constants\generated'] {
+Sun, 19 Jul 2026 01:36:17 GMT npm warn cleanup       errno: -4048,
+Sun, 19 Jul 2026 01:36:17 GMT npm warn cleanup       code: 'EPERM',
+Sun, 19 Jul 2026 01:36:17 GMT npm warn cleanup       syscall: 'rmdir',
+Sun, 19 Jul 2026 01:36:17 GMT npm warn cleanup       path: 'D:\\a\\agentic-cosync\\agentic-cosync\\apps\\desktop\\node_modules\\@babel\\types\\lib\\constants\\generated'
+Sun, 19 Jul 2026 01:36:17 GMT npm warn cleanup     }
+Sun, 19 Jul 2026 01:36:17 GMT npm warn cleanup   ]
+Sun, 19 Jul 2026 01:36:17 GMT npm warn cleanup ]
+Sun, 19 Jul 2026 01:36:17 GMT npm error code ENOTFOUND
+Sun, 19 Jul 2026 01:36:17 GMT npm error syscall getaddrinfo
+Sun, 19 Jul 2026 01:36:17 GMT npm error errno ENOTFOUND
+Sun, 19 Jul 2026 01:36:17 GMT npm error network request to http://package-firewall.replit.local/npm/tapable/-/tapable-2.3.3.tgz failed, reason: getaddrinfo ENOTFOUND package-firewall.replit.local
+Sun, 19 Jul 2026 01:36:17 GMT npm error network This is a problem related to network connectivity.
+Sun, 19 Jul 2026 01:36:17 GMT npm error network In most cases you are behind a proxy or have bad network settings.
+Sun, 19 Jul 2026 01:36:17 GMT npm error network
+Sun, 19 Jul 2026 01:36:17 GMT npm error network If you are behind a proxy, please make sure that the
+Sun, 19 Jul 2026 01:36:17 GMT npm error network 'proxy' config is set properly.  See: 'npm help config'
+Sun, 19 Jul 2026 01:36:17 GMT npm error A complete log of this run can be found in: C:\npm\cache\_logs\2026-07-19T01_35_06_650Z-debug-0.log
+Sun, 19 Jul 2026 01:36:18 GMT Error: Process completed with exit code 1.
+0s
+0s
+0s
+0s
+2s
+Sun, 19 Jul 2026 01:36:18 GMT Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+Sun, 19 Jul 2026 01:36:18 GMT Post job cleanup.
+Sun, 19 Jul 2026 01:36:18 GMT "C:\Program Files\Git\bin\git.exe" version
+Sun, 19 Jul 2026 01:36:18 GMT git version 2.55.0.windows.2
+Sun, 19 Jul 2026 01:36:18 GMT Temporarily overriding HOME='D:\a\_temp\73814c1d-2c44-47a1-b3d3-3b4638dd2011' before making global git config changes
+Sun, 19 Jul 2026 01:36:18 GMT Adding repository directory to the temporary git global config as a safe directory
+Sun, 19 Jul 2026 01:36:18 GMT "C:\Program Files\Git\bin\git.exe" config --global --add safe.directory D:\a\agentic-cosync\agentic-cosync
+Sun, 19 Jul 2026 01:36:18 GMT "C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp core\.sshCommand
+Sun, 19 Jul 2026 01:36:18 GMT "C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "sh -c \"git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :\""
+Sun, 19 Jul 2026 01:36:19 GMT "C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+Sun, 19 Jul 2026 01:36:19 GMT http.https://github.com/.extraheader
+Sun, 19 Jul 2026 01:36:19 GMT "C:\Program Files\Git\bin\git.exe" config --local --unset-all http.https://github.com/.extraheader
+Sun, 19 Jul 2026 01:36:19 GMT "C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "sh -c \"git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :\""
+Sun, 19 Jul 2026 01:36:19 GMT "C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp ^includeIf\.gitdir:
+Sun, 19 Jul 2026 01:36:19 GMT "C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "git config --local --show-origin --name-only --get-regexp remote.origin.url"
