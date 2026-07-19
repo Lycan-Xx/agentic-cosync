@@ -16,7 +16,7 @@ run = "pnpm --filter @workspace/cosync run dev"
 [services.production]
 build = [ "pnpm", "--filter", "@workspace/cosync", "run", "build" ]
 serve = "static"
-publicDir = "artifacts/cosync/dist/public"
+publicDir = "artifacts/web/dist/public"
 
 [[services.production.rewrites]]
 from = "/*"

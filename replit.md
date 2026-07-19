@@ -1,36 +1,41 @@
-# [Project name]
+# Cosync
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+Fast, private, zero-cloud LAN sync — clipboard, files, and notifications between your devices, instant and local.
 
 ## Run & Operate
 
-- `pnpm --filter @workspace/api-server run dev` — run the API server (port 5000)
-- `pnpm run typecheck` — full typecheck across all packages
-- `pnpm run build` — typecheck + build all packages
-- `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
-- `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
-- Required env: `DATABASE_URL` — Postgres connection string
+- `pnpm --filter @workspace/cosync run dev` — run the landing page (port 25788, artfact `artifacts/web`)
+- `cd apps/desktop && npm install && npm run tauri dev` — run the desktop app in dev mode
+- `cargo build -p cosync-core` — build the Rust library
+- `cargo test -p cosync-core` — test the Rust library
+- `pnpm run typecheck` — full TypeScript typecheck across all packages
 
 ## Stack
 
-- pnpm workspaces, Node.js 24, TypeScript 5.9
-- API: Express 5
-- DB: PostgreSQL + Drizzle ORM
-- Validation: Zod (`zod/v4`), `drizzle-zod`
-- API codegen: Orval (from OpenAPI spec)
-- Build: esbuild (CJS bundle)
+| Layer | Technology |
+|---|---|
+| Sync engine (Rust) | `crates/core/` — QUIC (quinn), mDNS-SD, Ed25519 identity, SQLite |
+| Desktop shell | Tauri v2 (Rust), in `apps/desktop/src-tauri/` |
+| Desktop UI | React 19, Vite 6, Tailwind CSS v4, in `apps/desktop/src/` |
+| Landing page | React 19, Vite, Tailwind CSS v4, in `artifacts/web/` |
+| Wire format | Protocol Buffers (prost-build) via `proto/cosync.proto` |
 
 ## Where things live
 
-_Populate as you build — short repo map plus pointers to the source-of-truth file for DB schema, API contracts, theme files, etc._
+- **Rust crate**: `crates/core/` — all sync logic (transport, discovery, session, storage, pairing, HLC)
+- **Desktop app**: `apps/desktop/` — React frontend + Tauri v2 shell
+- **Desktop Tauri commands**: `apps/desktop/src-tauri/src/commands.rs` — 13 IPC commands
+- **Landing page**: `artifacts/web/` — marketing site at `/`
+- **Proto definition**: `proto/cosync.proto` — compiled by prost-build in build.rs
+- **App icons source**: `assets/icons/logo.svg`
+- **Documentation**: `docs/` — architecture.md, getting-started.md, protocol.md
 
 ## Architecture decisions
 
-_Populate as you build — non-obvious choices a reader couldn't infer from the code (3-5 bullets)._
-
-## Product
-
-_Describe the high-level user-facing capabilities of this app once they exist._
+- **No cloud.** Every connection is direct peer-to-peer over LAN. No relay, no account, no server.
+- **Trust via pairing.** Each device generates an Ed25519 keypair and self-signs a TLS certificate. Pairing stores the peer's fingerprint; all subsequent connections require a pinned match.
+- **HLC for ordering.** Hybrid Logical Clocks provide a total causal order across devices without wall-clock synchronisation. Envelopes with >30s clock skew are dropped.
+- **Prost-build for protos.** `crates/core/build.rs` navigates up to `proto/` to compile `cosync.proto` at build time.
 
 ## User preferences
 
@@ -38,8 +43,11 @@ _Populate as you build — explicit user instructions worth remembering across s
 
 ## Gotchas
 
-_Populate as you build — sharp edges, "always run X before Y" rules._
+- `notify-rust ≥ 4.18` requires rustc ≥ 1.89. Pin to 4.11.3 if building with older toolchain: `cargo update notify-rust --precise 4.11.3`
+- Tauri v2 does not accept `app.title` in `tauri.conf.json` — the title goes per-window only.
+- Tauri requires RGBA PNGs (color type 6) for icons. RGB-only PNGs fail the build.
 
 ## Pointers
 
-- See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details
+- See `pnpm-workspace` skill for monorepo structure and TypeScript setup.
+- See `artifacts` skill for artifact registration and management.

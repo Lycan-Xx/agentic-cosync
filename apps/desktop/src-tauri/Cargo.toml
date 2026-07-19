@@ -1,0 +1,28 @@
+[package]
+name = "cosync-desktop"
+version = "0.1.0"
+edition = "2021"
+description = "Cosync desktop app — LAN device sync via QUIC"
+
+[lib]
+name = "cosync_desktop_lib"
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+cosync-core = { path = "../../../crates/core" }
+ed25519-dalek = { workspace = true }
+tauri = { version = "2", features = [] }
+tauri-plugin-shell = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
+tauri-plugin-notification = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+hostname = "0.4"
+hex = "0.4"
