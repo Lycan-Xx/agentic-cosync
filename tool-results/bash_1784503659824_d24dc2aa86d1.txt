@@ -1,0 +1,908 @@
+diff --git a/apps/desktop/src-tauri/Cargo.toml b/apps/desktop/src-tauri/Cargo.toml
+new file mode 100755
+index 0000000..45a6829
+--- /dev/null
++++ b/apps/desktop/src-tauri/Cargo.toml
+@@ -0,0 +1,28 @@
++[package]
++name = "cosync-desktop"
++version = "0.1.0"
++edition = "2021"
++description = "Cosync desktop app — LAN device sync via QUIC"
++
++[lib]
++name = "cosync_desktop_lib"
++crate-type = ["lib", "cdylib", "staticlib"]
++
++[build-dependencies]
++tauri-build = { version = "2", features = [] }
++
++[dependencies]
++cosync-core = { path = "../../../crates/core" }
++ed25519-dalek = { workspace = true }
++tauri = { version = "2", features = [] }
++tauri-plugin-shell = "2"
++tauri-plugin-dialog = "2"
++tauri-plugin-fs = "2"
++tauri-plugin-notification = "2"
++serde = { version = "1", features = ["derive"] }
++serde_json = "1"
++tokio = { workspace = true }
++tracing = { workspace = true }
++tracing-subscriber = { workspace = true }
++hostname = "0.4"
++hex = "0.4"
+diff --git a/apps/desktop/src-tauri/src/commands.rs b/apps/desktop/src-tauri/src/commands.rs
+new file mode 100755
+index 0000000..e00a8d8
+--- /dev/null
++++ b/apps/desktop/src-tauri/src/commands.rs
+@@ -0,0 +1,531 @@
++use cosync_core::{
++    ConnectionState, DeviceIdentity, DiscoveryService, HlcTimestamp, SessionEvent,
++    SessionManager, Storage,
++};
++use ed25519_dalek::pkcs8::EncodePrivateKey as _;
++use serde::{Deserialize, Serialize};
++use std::sync::Arc;
++use tokio::sync::Mutex;
++use tauri::{AppHandle, Emitter, State};
++
++use crate::state::{session_event_to_frontend, CosyncState};
++
++// ── Data types shared between Rust and the frontend ──────────────────
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++pub struct DeviceInfo {
++    pub device_name: String,
++    pub fingerprint: String,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++pub struct PairedDeviceView {
++    pub device_id: String,
++    pub device_name: String,
++    pub fingerprint: String,
++    pub last_known_ip: Option<String>,
++    pub last_seen_at: String,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++pub struct DiscoveredPeerView {
++    pub device_name: String,
++    pub fingerprint: String,
++    pub addresses: Vec<String>,
++    pub port: u16,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++pub struct ClipboardEntryView {
++    pub id: i64,
++    pub content: String,
++    pub content_type: String,
++    pub source_device_id: Option<String>,
++    pub created_at: String,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++pub struct SendFileResult {
++    pub transfer_id: String,
++    pub file_name: String,
++    pub file_size: u64,
++    pub total_chunks: u32,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(tag = "type", content = "data")]
++pub enum FrontendEvent {
++    ConnectionStateChanged { state: String },
++    DeviceFound(DiscoveredPeerView),
++    DeviceLost { device_name: String },
++    PairingRequest { device_name: String, fingerprint: String },
++    ClipboardReceived { content: String, source: String },
++    FileIncoming { transfer_id: String, file_name: String, file_size: u64 },
++    FileProgress { transfer_id: String, chunk_index: u32, total_chunks: u32 },
++    FileComplete { transfer_id: String, success: bool, path: String },
++    NotificationReceived { package_name: String, title: String, text: String },
++    Error { message: String },
++}
++
++// ── Tauri commands ────────────────────────────────────────────────────
++
++/// Returns this device's identity info (name + fingerprint).
++#[tauri::command]
++pub async fn get_device_info(state: State<'_, CosyncState>) -> Result<DeviceInfo, String> {
++    let identity = state.identity.lock().await;
++    Ok(DeviceInfo {
++        device_name: identity.device_name.clone(),
++        fingerprint: identity.fingerprint().map_err(|e| e.to_string())?,
++    })
++}
++
++/// Returns the current connection state.
++#[tauri::command]
++pub async fn get_connection_state(state: State<'_, CosyncState>) -> Result<String, String> {
++    let conn = state.connection_state.lock().await;
++    Ok(format!("{:?}", conn))
++}
++
++/// Starts mDNS discovery + QUIC server. Emits events as devices are found.
++#[tauri::command]
++pub async fn start_discovery(
++    app: AppHandle,
++    state: State<'_, CosyncState>,
++) -> Result<(), String> {
++    let identity = state.identity.lock().await;
++    let device_name = identity.device_name.clone();
++    let cert_der = identity.cert_der.clone();
++    let key_der = identity
++        .signing_key
++        .to_pkcs8_der()
++        .map_err(|e| format!("PKCS#8 export: {}", e))?
++        .as_bytes()
++        .to_vec();
++    let fingerprint = identity.fingerprint().map_err(|e| e.to_string())?;
++    drop(identity);
++
++    // Reuse the shared storage (already opened in CosyncState::new)
++    let storage = state.storage.clone();
++
++    // Create session manager
++    let session = SessionManager::new(device_name.clone(), cert_der, key_der, storage.clone())
++        .map_err(|e| e.to_string())?;
++
++    // Start QUIC server on a random port
++    let bind_addr: std::net::SocketAddr = "0.0.0.0:0".parse().unwrap();
++    session.start_server(bind_addr).await.map_err(|e| e.to_string())?;
++
++    // Take the event receiver BEFORE storing the session, so we can forward events
++    let mut event_rx = session
++        .take_event_receiver()
++        .await
++        .ok_or("Event receiver already taken")?;
++
++    // Create discovery service and advertise
++    let discovery = DiscoveryService::new().map_err(|e| e.to_string())?;
++    discovery
++        .advertise(&device_name, 0, &fingerprint)
++        .map_err(|e| e.to_string())?;
++
++    // Store in state
++    {
++        let mut sm = state.session_manager.lock().await;
++        *sm = Some(session);
++    }
++    {
++        let mut disc = state.discovery.lock().await;
++        *disc = Some(discovery);
++    }
++    {
++        let mut conn = state.connection_state.lock().await;
++        *conn = ConnectionState::Discovering;
++        let _ = app.emit(
++            "cosync://event",
++            FrontendEvent::ConnectionStateChanged {
++                state: "Discovering".into(),
++            },
++        );
++    }
++
++    // Spawn event forwarder: reads SessionEvents and emits them to the frontend
++    let app_handle = app.clone();
++    tokio::spawn(async move {
++        while let Some(session_event) = event_rx.recv().await {
++            let frontend_event = session_event_to_frontend(session_event).await;
++            let _ = app_handle.emit("cosync://event", frontend_event);
++        }
++    });
++
++    // Spawn a task that browses for peers and forwards events to the frontend
++    let app_handle = app.clone();
++    let disc_clone = state.discovery.clone();
++    let conn_state = state.connection_state.clone();
++    tokio::spawn(async move {
++        let disc_guard = disc_clone.lock().await;
++        if let Some(discovery) = disc_guard.as_ref() {
++            match discovery.browse() {
++                Ok(mut peer_rx) => {
++                    drop(disc_guard);
++                    while let Some(peer) = peer_rx.recv().await {
++                        let view = DiscoveredPeerView {
++                            device_name: peer.device_name.clone(),
++                            fingerprint: peer.fingerprint.clone(),
++                            addresses: peer.addresses.iter().map(|a| a.to_string()).collect(),
++                            port: peer.port,
++                        };
++                        let _ =
++                            app_handle.emit("cosync://event", FrontendEvent::DeviceFound(view));
++                    }
++                }
++                Err(e) => {
++                    let mut conn = conn_state.lock().await;
++                    *conn = ConnectionState::Error(e.to_string());
++                    let _ = app_handle.emit(
++                        "cosync://event",
++                        FrontendEvent::Error {
++                            message: e.to_string(),
++                        },
++                    );
++                }
++            }
++        }
++    });
++
++    Ok(())
++}
++
++/// Stops the current discovery/session.
++#[tauri::command]
++pub async fn stop_discovery(state: State<'_, CosyncState>) -> Result<(), String> {
++    let mut sm = state.session_manager.lock().await;
++    if let Some(ref session) = *sm {
++        session.shutdown().await;
++    }
++    *sm = None;
++
++    let mut disc = state.discovery.lock().await;
++    if let Some(discovery) = disc.as_ref() {
++        discovery.shutdown().map_err(|e| e.to_string())?;
++    }
++    *disc = None;
++
++    let mut conn = state.connection_state.lock().await;
++    *conn = ConnectionState::Idle;
++    Ok(())
++}
++
++/// Pairs with a discovered device given its IP address and port.
++#[tauri::command]
++pub async fn pair_with_device(
++    app: AppHandle,
++    state: State<'_, CosyncState>,
++    peer_ip: String,
++    peer_port: u16,
++    peer_fingerprint: String,
++) -> Result<(), String> {
++    let addr: std::net::SocketAddr = format!("{}:{}", peer_ip, peer_port)
++        .parse()
++        .map_err(|e| format!("Invalid address: {}", e))?;
++
++    {
++        let mut conn = state.connection_state.lock().await;
++        *conn = ConnectionState::Pairing;
++        let _ = app.emit(
++            "cosync://event",
++            FrontendEvent::ConnectionStateChanged {
++                state: "Pairing".into(),
++            },
++        );
++    }
++
++    let sm = state.session_manager.lock().await;
++    let session = sm
++        .as_ref()
++        .ok_or("No active session — call start_discovery first")?;
++    session
++        .pair_with_peer(addr, &peer_fingerprint)
++        .await
++        .map_err(|e| e.to_string())?;
++
++    {
++        let mut conn = state.connection_state.lock().await;
++        *conn = ConnectionState::Connected(String::new());
++        let _ = app.emit(
++            "cosync://event",
++            FrontendEvent::ConnectionStateChanged {
++                state: "Connected".into(),
++            },
++        );
++    }
++
++    Ok(())
++}
++
++/// Unpairs a device by its ID.
++#[tauri::command]
++pub async fn unpair_device(
++    state: State<'_, CosyncState>,
++    device_id: String,
++) -> Result<(), String> {
++    state
++        .storage
++        .remove_device(&device_id)
++        .map_err(|e| e.to_string())?;
++    Ok(())
++}
++
++/// Returns the list of paired devices from storage.
++#[tauri::command]
++pub async fn get_paired_devices(
++    state: State<'_, CosyncState>,
++) -> Result<Vec<PairedDeviceView>, String> {
++    let devices = state
++        .storage
++        .get_devices()
++        .map_err(|e| e.to_string())?;
++    Ok(devices
++        .into_iter()
++        .map(|d| PairedDeviceView {
++            device_id: d.device_id,
++            device_name: d.device_name,
++            fingerprint: d.fingerprint,
++            last_known_ip: d.last_known_ip,
++            last_seen_at: d.last_seen_at,
++        })
++        .collect())
++}
++
++/// Retrieves the local clipboard history from SQLite.
++#[tauri::command]
++pub async fn get_clipboard_history(
++    state: State<'_, CosyncState>,
++) -> Result<Vec<ClipboardEntryView>, String> {
++    let entries = state
++        .storage
++        .get_clipboard_history(100)
++        .map_err(|e| e.to_string())?;
++    Ok(entries
++        .into_iter()
++        .map(|e| ClipboardEntryView {
++            id: e.id,
++            content: String::from_utf8_lossy(&e.content).to_string(),
++            content_type: e.content_type,
++            source_device_id: e.source_device_id,
++            created_at: e.created_at,
++        })
++        .collect())
++}
++
++/// Clears all clipboard history from SQLite.
++#[tauri::command]
++pub async fn clear_clipboard_history(state: State<'_, CosyncState>) -> Result<(), String> {
++    state
++        .storage
++        .clear_clipboard_history()
++        .map_err(|e| e.to_string())?;
++    Ok(())
++}
++
++/// Sends a text clipboard entry to all connected peers.
++#[tauri::command]
++pub async fn send_clipboard(
++    state: State<'_, CosyncState>,
++    content: String,
++) -> Result<(), String> {
++    let sm = state.session_manager.lock().await;
++    let session = sm
++        .as_ref()
++        .ok_or("No active session — start discovery and pair first")?;
++
++    // Check we have at least one connected peer
++    let peers = session.connected_peers().await;
++    if peers.is_empty() {
++        return Err("No connected peers".into());
++    }
++
++    // Build HLC timestamp
++    let hlc = session.hlc();
++    let mut hlc_lock = hlc.lock().await;
++    let ts = hlc_lock.now();
++    let ts_bytes = serde_json::to_vec(&ts).map_err(|e| format!("Serialize HLC: {}", e))?;
++    drop(hlc_lock);
++
++    // Create and broadcast the clipboard envelope
++    let device_id_bytes = hex::decode(session.device_id())
++        .map_err(|e| format!("Decode device_id: {}", e))?;
++    let envelope = cosync_core::envelope::clipboard_envelope(
++        &device_id_bytes,
++        &ts_bytes,
++        content.as_bytes(),
++        "text/plain",
++    );
++
++    // Store locally
++    state
++        .storage
++        .insert_clipboard(content.as_bytes(), "text/plain", None, None)
++        .map_err(|e| e.to_string())?;
++
++    session
++        .broadcast(&envelope)
++        .await
++        .map_err(|e| e.to_string())?;
++
++    Ok(())
++}
++
++/// Sends a file to all connected peers.
++#[tauri::command]
++pub async fn send_file(
++    state: State<'_, CosyncState>,
++    file_path: String,
++) -> Result<SendFileResult, String> {
++    let sm = state.session_manager.lock().await;
++    let session = sm
++        .as_ref()
++        .ok_or("No active session — start discovery and pair first")?;
++
++    let peers = session.connected_peers().await;
++    if peers.is_empty() {
++        return Err("No connected peers".into());
++    }
++
++    let path = std::path::Path::new(&file_path);
++    if !path.exists() {
++        return Err(format!("File not found: {}", file_path));
++    }
++
++    // Generate a unique transfer ID
++    let transfer_id = format!(
++        "tx-{}-{}",
++        hex::encode(&session.device_id().as_bytes()[..4]),
++        std::time::SystemTime::now()
++            .duration_since(std::time::UNIX_EPOCH)
++            .unwrap_or_default()
++            .as_millis()
++    );
++
++    // Read and chunk the file
++    let ft = session.file_transfer();
++    let (info, chunks) = ft
++        .send_file(path, &transfer_id)
++        .await
++        .map_err(|e| e.to_string())?;
++
++    // Build HLC timestamp for file meta envelope
++    let hlc = session.hlc();
++    let mut hlc_lock = hlc.lock().await;
++    let ts = hlc_lock.now();
++    let ts_bytes = serde_json::to_vec(&ts).map_err(|e| format!("Serialize HLC: {}", e))?;
++    drop(hlc_lock);
++
++    let device_id_bytes = hex::decode(session.device_id())
++        .map_err(|e| format!("Decode device_id: {}", e))?;
++
++    // Send file meta first
++    let meta_envelope = cosync_core::envelope::file_meta_envelope(
++        &device_id_bytes,
++        &ts_bytes,
++        &info.file_name,
++        info.file_size,
++        &info.sha256,
++        "application/octet-stream",
++        info.total_chunks,
++        &info.transfer_id,
++    );
++    session
++        .broadcast(&meta_envelope)
++        .await
++        .map_err(|e| e.to_string())?;
++
++    // Send chunks (with a small delay between each to avoid overwhelming the connection)
++    for (i, chunk) in chunks.iter().enumerate() {
++        let hlc = session.hlc();
++        let mut hlc_lock = hlc.lock().await;
++        let ts = hlc_lock.now();
++        let ts_bytes = serde_json::to_vec(&ts).map_err(|e| format!("Serialize HLC: {}", e))?;
++        drop(hlc_lock);
++
++        let chunk_envelope = cosync_core::envelope::file_chunk_envelope(
++            &device_id_bytes,
++            &ts_bytes,
++            &info.transfer_id,
++            i as u32,
++            chunk,
++        );
++        session
++            .broadcast(&chunk_envelope)
++            .await
++            .map_err(|e| e.to_string())?;
++
++        // Brief yield between chunks to let the QUIC connection breathe
++        tokio::time::sleep(std::time::Duration::from_millis(1)).await;
++    }
++
++    // Send ack
++    let hlc = session.hlc();
++    let mut hlc_lock = hlc.lock().await;
++    let ts = hlc_lock.now();
++    let ts_bytes = serde_json::to_vec(&ts).map_err(|e| format!("Serialize HLC: {}", e))?;
++    drop(hlc_lock);
++
++    let ack_envelope = cosync_core::envelope::file_ack_envelope(
++        &device_id_bytes,
++        &ts_bytes,
++        &info.transfer_id,
++        true,
++        "",
++    );
++    session
++        .broadcast(&ack_envelope)
++        .await
++        .map_err(|e| e.to_string())?;
++
++    Ok(SendFileResult {
++        transfer_id: info.transfer_id,
++        file_name: info.file_name,
++        file_size: info.file_size,
++        total_chunks: info.total_chunks,
++    })
++}
++
++/// Opens the parent folder of a file in the system file manager.
++#[tauri::command]
++pub async fn open_file_in_folder(file_path: String) -> Result<(), String> {
++    let path = std::path::Path::new(&file_path);
++    let parent = path
++        .parent()
++        .ok_or("Cannot determine parent directory")?;
++
++    #[cfg(target_os = "linux")]
++    {
++        std::process::Command::new("xdg-open")
++            .arg(parent)
++            .spawn()
++            .map_err(|e| format!("Failed to open: {}", e))?;
++    }
++    #[cfg(target_os = "macos")]
++    {
++        std::process::Command::new("open")
++            .arg("-R")
++            .arg(path)
++            .spawn()
++            .map_err(|e| format!("Failed to open: {}", e))?;
++    }
++    #[cfg(target_os = "windows")]
++    {
++        std::process::Command::new("explorer")
++            .args(["/select,", &file_path])
++            .spawn()
++            .map_err(|e| format!("Failed to open: {}", e))?;
++    }
++
++    Ok(())
++}
++
++/// Returns this device's fingerprint.
++#[tauri::command]
++pub async fn get_device_fingerprint(state: State<'_, CosyncState>) -> Result<String, String> {
++    let identity = state.identity.lock().await;
++    identity.fingerprint().map_err(|e| e.to_string())
++}
+\ No newline at end of file
+diff --git a/apps/desktop/vite.config.ts b/apps/desktop/vite.config.ts
+new file mode 100755
+index 0000000..9cb11d8
+--- /dev/null
++++ b/apps/desktop/vite.config.ts
+@@ -0,0 +1,25 @@
++import { defineConfig } from "vite";
++import react from "@vitejs/plugin-react";
++import tailwindcss from "@tailwindcss/vite";
++
++const host = process.env.TAURI_DEV_HOST;
++
++export default defineConfig(async () => ({
++  plugins: [react(), tailwindcss()],
++  clearScreen: false,
++  server: {
++    port: 1420,
++    strictPort: true,
++    host: host || false,
++    hmr: host
++      ? {
++          protocol: "ws",
++          host,
++          port: 1421,
++        }
++      : undefined,
++    watch: {
++      ignored: ["**/src-tauri/**"],
++    },
++  },
++}));
+\ No newline at end of file
+diff --git a/crates/core/src/lib.rs b/crates/core/src/lib.rs
+new file mode 100755
+index 0000000..bbb3f70
+--- /dev/null
++++ b/crates/core/src/lib.rs
+@@ -0,0 +1,25 @@
++pub mod clipboard;
++pub mod discovery;
++pub mod envelope;
++pub mod error;
++pub mod file_transfer;
++pub mod hlc;
++pub mod identity;
++pub mod notification;
++pub mod pairing;
++pub mod session;
++pub mod state;
++pub mod storage;
++pub mod transport;
++pub mod wire;
++
++pub use discovery::DiscoveryService;
++pub use error::CosyncError;
++pub use hlc::{HlcTimestamp, HybridLogicalClock};
++pub use identity::DeviceIdentity;
++pub use session::{SessionEvent, SessionManager};
++pub use state::ConnectionState;
++pub use storage::Storage;
++
++#[cfg(feature = "mobile-bindings")]
++uniffi::setup_scaffolding!();
+\ No newline at end of file
+diff --git a/crates/core/src/session.rs b/crates/core/src/session.rs
+new file mode 100755
+index 0000000..a62e605
+--- /dev/null
++++ b/crates/core/src/session.rs
+@@ -0,0 +1,265 @@
++use crate::envelope::{pairing_request_envelope};
++use crate::error::{CosyncError, Result};
++use crate::file_transfer::FileTransferManager;
++use crate::hlc::{HlcTimestamp, HybridLogicalClock};
++use crate::notification::NotificationMirror;
++use crate::state::ConnectionState;
++use crate::storage::Storage;
++use crate::transport::{accept_connection, create_client_endpoint, create_server_endpoint, recv_envelope, send_envelope, PinnedCertVerifier};
++use crate::wire::cosync::envelope::Payload;
++use crate::wire::cosync::Envelope;
++use quinn::Connection;
++use sha2::{Digest, Sha256};
++use std::collections::HashMap;
++use std::net::SocketAddr;
++use std::sync::Arc;
++use tokio::sync::{mpsc, watch, Mutex};
++
++#[derive(Debug, Clone)]
++pub enum SessionEvent {
++    StateChanged(ConnectionState),
++    ClipboardReceived { content: Vec<u8>, content_type: String, source: String },
++    FileIncoming { transfer_id: String, file_name: String, file_size: u64 },
++    FileProgress { transfer_id: String, chunk_index: u32, total_chunks: u32 },
++    FileComplete { transfer_id: String, success: bool, path: String },
++    NotificationReceived { package_name: String, title: String, text: String },
++    PeerPaired { device_name: String, fingerprint: String },
++    Error(String),
++}
++
++pub struct SessionManager {
++    device_id: String,
++    device_name: String,
++    cert_der: Vec<u8>,
++    key_der: Vec<u8>,
++    hlc: Arc<Mutex<HybridLogicalClock>>,
++    storage: Arc<Storage>,
++    state_tx: watch::Sender<ConnectionState>,
++    state_rx: watch::Receiver<ConnectionState>,
++    event_tx: mpsc::Sender<SessionEvent>,
++    event_rx: Mutex<Option<mpsc::Receiver<SessionEvent>>>,
++    connections: Arc<Mutex<HashMap<String, Connection>>>,
++    cert_verifier: Arc<PinnedCertVerifier>,
++    server_endpoint: Arc<Mutex<Option<quinn::Endpoint>>>,
++    file_transfer: Arc<FileTransferManager>,
++    _notification_mirror: Arc<NotificationMirror>,
++    shutdown: Arc<tokio::sync::Notify>,
++}
++
++impl SessionManager {
++    pub fn new(device_name: String, cert_der: Vec<u8>, key_der: Vec<u8>, storage: Arc<Storage>) -> Result<Self> {
++        let fingerprint = {
++            let parsed = x509_parser::parse_x509_certificate(&cert_der)
++                .map_err(|e| CosyncError::Cert(format!("Parse cert: {}", e)))?;
++            let mut h = Sha256::new();
++            h.update(parsed.1.public_key().raw);
++            hex::encode(h.finalize())
++        };
++        let (state_tx, state_rx) = watch::channel(ConnectionState::Idle);
++        let (event_tx, event_rx) = mpsc::channel(256);
++        let hlc = Arc::new(Mutex::new(HybridLogicalClock::new(fingerprint.clone())));
++        Ok(Self {
++            device_id: fingerprint, device_name, cert_der, key_der, hlc, storage,
++            state_tx, state_rx, event_tx, event_rx: Mutex::new(Some(event_rx)),
++            connections: Arc::new(Mutex::new(HashMap::new())),
++            cert_verifier: Arc::new(PinnedCertVerifier::new()),
++            server_endpoint: Arc::new(Mutex::new(None)),
++            file_transfer: Arc::new(FileTransferManager::new()),
++            _notification_mirror: Arc::new(NotificationMirror::new()),
++            shutdown: Arc::new(tokio::sync::Notify::new()),
++        })
++    }
++
++    pub fn state_receiver(&self) -> watch::Receiver<ConnectionState> { self.state_rx.clone() }
++
++    /// Takes the event receiver. Can only be called once; returns `None` on subsequent calls.
++    /// Consumers (e.g. Tauri backend) use this to forward `SessionEvent`s to the frontend.
++    pub async fn take_event_receiver(&self) -> Option<mpsc::Receiver<SessionEvent>> {
++        self.event_rx.lock().await.take()
++    }
++
++    /// Returns this device's fingerprint (SHA-256 of the public key).
++    pub fn device_id(&self) -> &str { &self.device_id }
++
++    /// Returns a clone of the HLC handle for creating timestamps.
++    pub fn hlc(&self) -> Arc<Mutex<HybridLogicalClock>> { self.hlc.clone() }
++
++    /// Returns a clone of the storage handle for querying DB.
++    pub fn storage(&self) -> Arc<Storage> { self.storage.clone() }
++
++    /// Returns a clone of the file transfer manager.
++    pub fn file_transfer(&self) -> Arc<FileTransferManager> { self.file_transfer.clone() }
++
++    /// Returns the list of connected peer fingerprints.
++    pub async fn connected_peers(&self) -> Vec<String> {
++        self.connections.lock().await.keys().cloned().collect()
++    }
++
++    pub async fn start_server(&self, bind_addr: SocketAddr) -> Result<()> {
++        let endpoint = create_server_endpoint(bind_addr, self.cert_der.clone(), self.key_der.clone())?;
++        *self.server_endpoint.lock().await = Some(endpoint.clone());
++        let hlc = self.hlc.clone();
++        let event_tx = self.event_tx.clone();
++        let device_id = self.device_id.clone();
++        let storage = self.storage.clone();
++        let file_transfer = self.file_transfer.clone();
++        let shutdown = self.shutdown.clone();
++        tokio::spawn(async move {
++            loop {
++                tokio::select! {
++                    result = accept_connection(&endpoint) => {
++                        match result {
++                            Ok(conn) => {
++                                let addr = conn.remote_address();
++                                tracing::info!(%addr, "Accepted connection");
++                                let c = conn.clone(); let h = hlc.clone(); let et = event_tx.clone();
++                                let did = device_id.clone(); let st = storage.clone(); let ft = file_transfer.clone();
++                                tokio::spawn(async move {
++                                    if let Err(e) = Self::recv_loop(c, h, et, did, st, ft).await {
++                                        tracing::error!("Recv loop error: {}", e);
++                                    }
++                                });
++                            }
++                            Err(e) => { tracing::error!("Accept error: {}", e); break; }
++                        }
++                    }
++                    _ = shutdown.notified() => { break; }
++                }
++            }
++        });
++        Ok(())
++    }
++
++    async fn recv_loop(conn: Connection, hlc: Arc<Mutex<HybridLogicalClock>>,
++        event_tx: mpsc::Sender<SessionEvent>, device_id: String,
++        storage: Arc<Storage>, _file_transfer: Arc<FileTransferManager>) -> Result<()> {
++        loop {
++            match conn.accept_bi().await {
++                Ok((mut _send, mut recv)) => {
++                    match recv_envelope(&mut recv).await {
++                        Ok(envelope) => {
++                            let hlc_ts: HlcTimestamp = serde_json::from_slice(&envelope.hlc_timestamp)
++                                .unwrap_or(HlcTimestamp::new(0, 0, "unknown".into()));
++                            let mut hlc_lock = hlc.lock().await;
++                            if let Err(true) = hlc_lock.receive(&hlc_ts) { continue; }
++                            drop(hlc_lock);
++                            Self::handle_envelope(&envelope, &event_tx, &device_id, &storage).await;
++                        }
++                        Err(e) => tracing::warn!("Recv error: {}", e),
++                    }
++                }
++                Err(quinn::ConnectionError::ApplicationClosed { .. }) => break,
++                Err(e) => { tracing::warn!("Conn error: {}", e); break; }
++            }
++        }
++        Ok(())
++    }
++
++    async fn handle_envelope(envelope: &Envelope, event_tx: &mpsc::Sender<SessionEvent>,
++        _device_id: &str, storage: &Storage) {
++        match &envelope.payload {
++            Some(Payload::ClipboardUpdate(cb)) => {
++                let _ = event_tx.send(SessionEvent::ClipboardReceived {
++                    content: cb.content.clone(), content_type: cb.content_type.clone(),
++                    source: hex::encode(&envelope.sender_device_id) }).await;
++                let hlc_str = String::from_utf8_lossy(&envelope.hlc_timestamp).to_string();
++                let _ = storage.insert_clipboard(&cb.content, &cb.content_type,
++                    Some(&hex::encode(&envelope.sender_device_id)), Some(&hlc_str));
++            }
++            Some(Payload::FileMeta(fm)) => {
++                let _ = event_tx.send(SessionEvent::FileIncoming {
++                    transfer_id: fm.transfer_id.clone(), file_name: fm.file_name.clone(),
++                    file_size: fm.file_size }).await;
++            }
++            Some(Payload::FileChunk(fc)) => {
++                let _ = event_tx.send(SessionEvent::FileProgress {
++                    transfer_id: fc.transfer_id.clone(), chunk_index: fc.chunk_index, total_chunks: 0 }).await;
++            }
++            Some(Payload::FileAck(fa)) => {
++                let _ = event_tx.send(SessionEvent::FileComplete {
++                    transfer_id: fa.transfer_id.clone(), success: fa.success, path: String::new() }).await;
++            }
++            Some(Payload::NotificationEvent(ne)) => {
++                let _ = event_tx.send(SessionEvent::NotificationReceived {
++                    package_name: ne.package_name.clone(), title: ne.title.clone(),
++                    text: ne.text.clone() }).await;
++            }
++            Some(Payload::Heartbeat(_)) => {}
++            Some(Payload::PairingRequest(pr)) => {
++                tracing::info!(device = %pr.device_name, "Pairing request received");
++                let _ = event_tx.send(SessionEvent::PeerPaired {
++                    device_name: pr.device_name.clone(), fingerprint: pr.public_key_fingerprint.clone() }).await;
++                let _ = storage.upsert_device(&hex::encode(&envelope.sender_device_id),
++                    &pr.device_name, &pr.public_key_fingerprint, None);
++            }
++            Some(Payload::PairingAck(pa)) => {
++                if pa.accepted {
++                    tracing::info!(device = %pa.device_name, "Pairing accepted");
++                    let _ = event_tx.send(SessionEvent::PeerPaired {
++                        device_name: pa.device_name.clone(), fingerprint: pa.public_key_fingerprint.clone() }).await;
++                } else {
++                    tracing::warn!(reason = %pa.reason, "Pairing rejected");
++                }
++            }
++            _ => {}
++        }
++    }
++
++    pub async fn pair_with_peer(&self, peer_addr: SocketAddr, peer_fingerprint: &str) -> Result<()> {
++        self.cert_verifier.add_fingerprint(peer_fingerprint);
++        let client_endpoint = create_client_endpoint(self.cert_verifier.clone())?;
++        let connect = client_endpoint.connect(peer_addr, "cosync-peer").unwrap();
++        let connection = connect.await.map_err(|e| CosyncError::Transport(format!("Connect: {}", e)))?;
++        let mut hlc = self.hlc.lock().await;
++        let ts = hlc.now();
++        let ts_bytes = serde_json::to_vec(&ts)?;
++        drop(hlc);
++        let token = rand::random::<[u8; 32]>();
++        let envelope = pairing_request_envelope(self.device_id.as_bytes(), &ts_bytes,
++            &self.device_name, &self.device_id, peer_addr.port() as u32, &token);
++        let (mut send, mut recv) = connection.open_bi().await
++            .map_err(|e| CosyncError::Transport(e.to_string()))?;
++        send_envelope(&mut send, &envelope).await?;
++        let ack = recv_envelope(&mut recv).await?;
++        if let Some(Payload::PairingAck(pa)) = ack.payload {
++            if pa.accepted {
++                self.storage.upsert_device(&hex::encode(&ack.sender_device_id),
++                    &pa.device_name, &pa.public_key_fingerprint,
++                    Some(&peer_addr.ip().to_string()))?;
++                self.cert_verifier.add_fingerprint(&pa.public_key_fingerprint);
++                self.connections.lock().await.insert(pa.public_key_fingerprint.clone(), connection.clone());
++                let name = pa.device_name.clone();
++                let _ = self.state_tx.send(ConnectionState::Connected(name));
++                Ok(())
++            } else {
++                Err(CosyncError::Pairing(format!("Rejected: {}", pa.reason)))
++            }
++        } else {
++            Err(CosyncError::Pairing("Expected PairingAck".into()))
++        }
++    }
++
++    pub async fn send_to(&self, fingerprint: &str, envelope: &Envelope) -> Result<()> {
++        let connections = self.connections.lock().await;
++        if let Some(conn) = connections.get(fingerprint) {
++            let (mut send, _) = conn.open_bi().await.map_err(|e| CosyncError::Transport(e.to_string()))?;
++            send_envelope(&mut send, envelope).await
++        } else {
++            Err(CosyncError::DeviceNotFound(fingerprint.into()))
++        }
++    }
++
++    pub async fn broadcast(&self, envelope: &Envelope) -> Result<()> {
++        let connections = self.connections.lock().await;
++        for (fp, conn) in connections.iter() {
++            if let Ok((mut send, _)) = conn.open_bi().await {
++                if let Err(e) = send_envelope(&mut send, envelope).await {
++                    tracing::warn!(peer = %fp, "Broadcast error: {}", e);
++                }
++            }
++        }
++        Ok(())
++    }
++
++    pub async fn shutdown(&self) { self.shutdown.notify_waiters(); }
++}
+\ No newline at end of file
