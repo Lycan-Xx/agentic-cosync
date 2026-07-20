@@ -79,11 +79,25 @@ pub async fn get_device_info(state: State<'_, CosyncState>) -> Result<DeviceInfo
     })
 }
 
-/// Returns the current connection state.
+/// Returns this device's fingerprint.
+#[tauri::command]
+pub async fn get_device_fingerprint(state: State<'_, CosyncState>) -> Result<String, String> {
+    let identity = state.identity.lock().await;
+    identity.fingerprint().map_err(|e| e.to_string())
+}
+
+/// Returns the current connection state (cleaned string like "Idle", "Discovering", "Connected").
 #[tauri::command]
 pub async fn get_connection_state(state: State<'_, CosyncState>) -> Result<String, String> {
     let conn = state.connection_state.lock().await;
-    Ok(format!("{:?}", conn))
+    let raw = format!("{:?}", conn);
+    // Strip the inner value from Connected("Name") → "Connected"
+    let clean = if raw.starts_with("Connected(") {
+        "Connected".to_string()
+    } else {
+        raw
+    };
+    Ok(clean)
 }
 
 /// Starts mDNS discovery + QUIC server. Emits events as devices are found.
@@ -194,9 +208,15 @@ pub async fn start_discovery(
     Ok(())
 }
 
-/// Stops the current discovery/session.
+/// Stops the current discovery/session and the clipboard monitor.
 #[tauri::command]
 pub async fn stop_discovery(state: State<'_, CosyncState>) -> Result<(), String> {
+    // Stop clipboard monitor
+    {
+        let cancel = state.clipboard_cancel.lock().await;
+        cancel.cancel();
+    }
+
     let mut sm = state.session_manager.lock().await;
     if let Some(ref session) = *sm {
         session.shutdown().await;
@@ -316,6 +336,19 @@ pub async fn get_clipboard_history(
         .collect())
 }
 
+/// Deletes a single clipboard history entry by ID.
+#[tauri::command]
+pub async fn delete_clipboard_entry(
+    state: State<'_, CosyncState>,
+    id: i64,
+) -> Result<(), String> {
+    state
+        .storage
+        .delete_clipboard_entry(id)
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 /// Clears all clipboard history from SQLite.
 #[tauri::command]
 pub async fn clear_clipboard_history(state: State<'_, CosyncState>) -> Result<(), String> {
@@ -360,7 +393,7 @@ pub async fn send_clipboard(
         "text/plain",
     );
 
-    // Store locally
+    // Store locally (source_device_id = None means "sent from this device")
     state
         .storage
         .insert_clipboard(content.as_bytes(), "text/plain", None, None)
@@ -371,6 +404,148 @@ pub async fn send_clipboard(
         .await
         .map_err(|e| e.to_string())?;
 
+    Ok(())
+}
+
+/// Starts polling the system clipboard for changes.
+/// Every 500 ms the OS clipboard is read; if the content hash changed since
+/// the last poll, the new content is stored locally, shown in the UI, and
+/// broadcast to all connected peers.
+#[tauri::command]
+pub async fn start_clipboard_monitor(
+    app: AppHandle,
+    state: State<'_, CosyncState>,
+) -> Result<(), String> {
+    // Cancel any previous monitor and create a fresh token
+    let cancel = {
+        let mut tok = state.clipboard_cancel.lock().await;
+        tok.cancel();
+        *tok = CancellationToken::new();
+        tok.clone()
+    };
+
+    let storage = state.storage.clone();
+    let session_manager = state.session_manager.clone();
+
+    // Spawn the polling loop
+    tokio::spawn(async move {
+        // DesktopClipboardMonitor::poll() calls into arboard which is synchronous
+        // and may block on X11/Wayland. We use a separate blocking thread
+        // for the monitor to avoid stalling the tokio runtime.
+        let (poll_tx, mut poll_rx) = tokio::sync::mpsc::channel::<Option<(Vec<u8>, String)>>(1);
+
+        // Blocking thread: polls the system clipboard and sends results
+        std::thread::spawn(move || {
+            let mut monitor = cosync_core::DesktopClipboardMonitor::new();
+            loop {
+                match monitor.poll() {
+                    Ok(Some(result)) => {
+                        if poll_tx.blocking_send(Some(result)).is_err() {
+                            break; // receiver dropped — shut down
+                        }
+                    }
+                    Ok(None) => {} // no change
+                    Err(e) => {
+                        tracing::warn!("Clipboard poll error: {}", e);
+                    }
+                }
+                std::thread::sleep(std::time::Duration::from_millis(500));
+            }
+        });
+
+        // Async loop: receives poll results and processes them
+        loop {
+            tokio::select! {
+                _ = cancel.cancelled() => {
+                    tracing::info!("Clipboard monitor stopped");
+                    break;
+                }
+                result = poll_rx.recv() => {
+                    let Some(Some((content, content_type))) = result else {
+                        break; // channel closed
+                    };
+
+                    tracing::debug!(
+                        size = content.len(),
+                        ctype = %content_type,
+                        "Local clipboard change detected"
+                    );
+
+                    // 1. Store locally in SQLite
+                    if let Err(e) = storage.insert_clipboard(
+                        &content,
+                        &content_type,
+                        None,  // source = local
+                        None,
+                    ) {
+                        tracing::error!("Failed to store clipboard: {}", e);
+                    }
+
+                    // 2. Emit to frontend so it appears in the UI immediately
+                    let text = if content_type.starts_with("text/") {
+                        String::from_utf8_lossy(&content).to_string()
+                    } else {
+                        format!("[{} attachment, {} bytes]", content_type, content.len())
+                    };
+                    let _ = app.emit(
+                        "cosync://event",
+                        FrontendEvent::ClipboardReceived {
+                            content: text,
+                            source: "local".to_string(),
+                        },
+                    );
+
+                    // 3. If connected, broadcast to peers
+                    let sm = session_manager.lock().await;
+                    if let Some(session) = sm.as_ref() {
+                        let peers = session.connected_peers().await;
+                        if !peers.is_empty() {
+                            let hlc = session.hlc();
+                            let mut hlc_lock = hlc.lock().await;
+                            let ts = hlc_lock.now();
+                            let ts_bytes = match serde_json::to_vec(&ts) {
+                                Ok(b) => b,
+                                Err(e) => {
+                                    tracing::error!("Serialize HLC: {}", e);
+                                    continue;
+                                }
+                            };
+                            drop(hlc_lock);
+
+                            let device_id_bytes = match hex::decode(session.device_id()) {
+                                Ok(b) => b,
+                                Err(e) => {
+                                    tracing::error!("Decode device_id: {}", e);
+                                    continue;
+                                }
+                            };
+
+                            let envelope = cosync_core::envelope::clipboard_envelope(
+                                &device_id_bytes,
+                                &ts_bytes,
+                                &content,
+                                &content_type,
+                            );
+
+                            if let Err(e) = session.broadcast(&envelope).await {
+                                tracing::error!("Broadcast clipboard: {}", e);
+                            }
+                        }
+                    }
+                    // sm lock is released here
+                }
+            }
+        }
+    });
+
+    Ok(())
+}
+
+/// Stops the clipboard polling loop.
+#[tauri::command]
+pub async fn stop_clipboard_monitor(state: State<'_, CosyncState>) -> Result<(), String> {
+    let cancel = state.clipboard_cancel.lock().await;
+    cancel.cancel();
     Ok(())
 }
 
@@ -521,11 +696,4 @@ pub async fn open_file_in_folder(file_path: String) -> Result<(), String> {
     }
 
     Ok(())
-}
-
-/// Returns this device's fingerprint.
-#[tauri::command]
-pub async fn get_device_fingerprint(state: State<'_, CosyncState>) -> Result<String, String> {
-    let identity = state.identity.lock().await;
-    identity.fingerprint().map_err(|e| e.to_string())
 }

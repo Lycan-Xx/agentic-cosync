@@ -20,6 +20,8 @@ pub use identity::DeviceIdentity;
 pub use session::{SessionEvent, SessionManager};
 pub use state::ConnectionState;
 pub use storage::Storage;
+#[cfg(not(feature = "mobile-bindings"))]
+pub use clipboard::DesktopClipboardMonitor;
 
 #[cfg(feature = "mobile-bindings")]
 uniffi::setup_scaffolding!();

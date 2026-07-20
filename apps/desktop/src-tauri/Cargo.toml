@@ -26,3 +26,5 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 hostname = "0.4"
 hex = "0.4"
+arboard = { workspace = true }
+tokio-util = "0.7"

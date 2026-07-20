@@ -53,7 +53,10 @@ pub fn run() {
             // Clipboard
             commands::get_clipboard_history,
             commands::send_clipboard,
+            commands::delete_clipboard_entry,
             commands::clear_clipboard_history,
+            commands::start_clipboard_monitor,
+            commands::stop_clipboard_monitor,
             // File transfer
             commands::send_file,
             commands::open_file_in_folder,

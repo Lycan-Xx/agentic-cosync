@@ -66,6 +66,14 @@ export async function clearClipboardHistory(): Promise<void> {
   return invoke<void>("clear_clipboard_history");
 }
 
+export async function startClipboardMonitor(): Promise<void> {
+  return invoke<void>("start_clipboard_monitor");
+}
+
+export async function stopClipboardMonitor(): Promise<void> {
+  return invoke<void>("stop_clipboard_monitor");
+}
+
 // ── File transfer commands ───────────────────────────────────────
 
 export async function sendFile(filePath: string): Promise<SendFileResult> {

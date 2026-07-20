@@ -25,6 +25,7 @@ export interface AppState {
   errorMessage: string | null;
   // Clipboard
   clipboardHistory: ClipboardEntry[];
+  clipboardMonitoring: boolean;
   // File transfers
   activeTransfers: FileTransferProgress[];
 }
@@ -38,6 +39,7 @@ export function useCosync() {
     discoveredPeers: [],
     errorMessage: null,
     clipboardHistory: [],
+    clipboardMonitoring: false,
     activeTransfers: [],
   });
 
@@ -72,13 +74,27 @@ export function useCosync() {
           const fe = event.payload;
 
           switch (fe.type) {
-            case "ConnectionStateChanged":
+            case "ConnectionStateChanged": {
+              const raw = fe.data.state;
+              // Normalise the state string (e.g. "Connected" or "Discovering")
+              const lower = raw.toLowerCase();
+              const mapped: ConnectionStatus =
+                lower.startsWith("connected")
+                  ? "connected"
+                  : lower.startsWith("discover")
+                    ? "discovering"
+                    : lower === "pairing"
+                      ? "pairing"
+                      : lower === "error"
+                        ? "error"
+                        : "idle";
+
               setState((prev) => ({
                 ...prev,
-                connectionStatus:
-                  fe.data.state.toLowerCase() as ConnectionStatus,
+                connectionStatus: mapped,
               }));
               break;
+            }
 
             case "DeviceFound":
               setState((prev) => {
@@ -110,12 +126,17 @@ export function useCosync() {
                 id: Date.now(),
                 content: fe.data.content,
                 content_type: "text/plain",
-                source_device_id: fe.data.source || null,
+                source_device_id:
+                  fe.data.source === "local" ? null : fe.data.source,
                 created_at: new Date().toISOString(),
               };
               setState((prev) => ({
                 ...prev,
-                clipboardHistory: [newEntry, ...prev.clipboardHistory],
+                // Deduplicate: don't add if the same content is already at the top
+                clipboardHistory:
+                  prev.clipboardHistory[0]?.content === newEntry.content
+                    ? prev.clipboardHistory
+                    : [newEntry, ...prev.clipboardHistory],
               }));
               break;
             }
@@ -200,6 +221,10 @@ export function useCosync() {
     setStatus("discovering");
     try {
       await cmd.startDiscovery();
+      // Start clipboard monitoring immediately — captures local copies
+      // even before pairing (they get stored + shown in UI, broadcast later)
+      await cmd.startClipboardMonitor();
+      setState((prev) => ({ ...prev, clipboardMonitoring: true }));
     } catch (e) {
       setState((prev) => ({
         ...prev,
@@ -211,8 +236,10 @@ export function useCosync() {
 
   const stopDiscovery = useCallback(async () => {
     try {
+      await cmd.stopClipboardMonitor();
       await cmd.stopDiscovery();
       setStatus("idle");
+      setState((prev) => ({ ...prev, clipboardMonitoring: false }));
     } catch (e) {
       setState((prev) => ({ ...prev, errorMessage: String(e) }));
     }
@@ -240,6 +267,21 @@ export function useCosync() {
   const sendClipboard = useCallback(async (content: string) => {
     try {
       await cmd.sendClipboard(content);
+      // Immediately show the sent entry in the UI
+      const newEntry: ClipboardEntry = {
+        id: Date.now(),
+        content,
+        content_type: "text/plain",
+        source_device_id: null, // sent from this device
+        created_at: new Date().toISOString(),
+      };
+      setState((prev) => ({
+        ...prev,
+        clipboardHistory:
+          prev.clipboardHistory[0]?.content === content
+            ? prev.clipboardHistory
+            : [newEntry, ...prev.clipboardHistory],
+      }));
     } catch (e) {
       setState((prev) => ({ ...prev, errorMessage: String(e) }));
     }
@@ -263,6 +305,18 @@ export function useCosync() {
       setState((prev) => ({ ...prev, clipboardHistory: [] }));
     } catch (e) {
       console.error("Failed to clear clipboard history:", e);
+    }
+  }, []);
+
+  const deleteClipboardEntry = useCallback(async (id: number) => {
+    try {
+      await cmd.deleteClipboardEntry(id);
+      setState((prev) => ({
+        ...prev,
+        clipboardHistory: prev.clipboardHistory.filter((e) => e.id !== id),
+      }));
+    } catch (e) {
+      console.error("Failed to delete clipboard entry:", e);
     }
   }, []);
 
@@ -307,6 +361,7 @@ export function useCosync() {
     sendClipboard,
     loadClipboardHistory,
     clearClipboardHistory,
+    deleteClipboardEntry,
     sendFile,
     dismissTransfer,
     dismissError: useCallback(() => {

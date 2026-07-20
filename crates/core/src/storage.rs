@@ -119,6 +119,13 @@ impl Storage {
         conn.execute("DELETE FROM clipboard_history", []).map_err(|e| CosyncError::Storage(format!("Clear: {}", e)))?;
         Ok(())
     }
+
+    pub fn delete_clipboard_entry(&self, id: i64) -> Result<()> {
+        let conn = self.conn.lock().map_err(|e| CosyncError::Storage(e.to_string()))?;
+        conn.execute("DELETE FROM clipboard_history WHERE id=?1", params![id])
+            .map_err(|e| CosyncError::Storage(format!("Delete entry: {}", e)))?;
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone)]

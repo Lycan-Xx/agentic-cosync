@@ -27,7 +27,11 @@ apps/desktop/src-tauri/gen/
 
 # ── TypeScript incremental build info ─────────────────────────────────────────
 *.tsbuildinfo
+next-env.d.ts
 
-# ── Migration backup (large, not part of the committed project) ───────────────
-.migration-backup/
+# ── Agent/skill files (not part of the Cosync project) ────────────────────────
+skills/
+dev.log
+upload/
+worklog.md
 

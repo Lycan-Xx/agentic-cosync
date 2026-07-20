@@ -2,6 +2,7 @@ use cosync_core::{ConnectionState, DeviceIdentity, DiscoveryService, SessionEven
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use tokio_util::sync::CancellationToken;
 
 /// Shared application state, managed by Tauri's state system.
 /// Every Tauri command receives a `State<'_, CosyncState>` reference.
@@ -18,6 +19,9 @@ pub struct CosyncState {
     pub storage: Arc<Storage>,
     /// Path to the app data directory (for identity + database storage + received files).
     pub app_data_dir: Arc<Mutex<PathBuf>>,
+    /// Cancellation token for the clipboard polling task.
+    /// Wrapped in Mutex so we can swap it when restarting the monitor.
+    pub clipboard_cancel: Arc<Mutex<CancellationToken>>,
 }
 
 impl CosyncState {
@@ -38,6 +42,7 @@ impl CosyncState {
             connection_state: Arc::new(Mutex::new(ConnectionState::Idle)),
             storage: Arc::new(storage),
             app_data_dir: Arc::new(Mutex::new(data_dir)),
+            clipboard_cancel: Arc::new(Mutex::new(CancellationToken::new())),
         }
     }
 }
@@ -45,10 +50,19 @@ impl CosyncState {
 /// Converts a core `SessionEvent` into a `FrontendEvent` for the JS frontend.
 pub async fn session_event_to_frontend(fe: SessionEvent) -> crate::commands::FrontendEvent {
     match fe {
-        SessionEvent::StateChanged(cs) => crate::commands::FrontendEvent::ConnectionStateChanged {
-            state: format!("{:?}", cs),
-        },
+        SessionEvent::StateChanged(cs) => {
+            // Extract clean state name (e.g. "Connected(\"Name\")" → "Connected")
+            let state_str = format!("{:?}", cs);
+            let clean = if state_str.starts_with("Connected(") {
+                "Connected".to_string()
+            } else {
+                state_str
+            };
+            crate::commands::FrontendEvent::ConnectionStateChanged { state: clean }
+        }
         SessionEvent::ClipboardReceived { content, content_type, source } => {
+            // Write received clipboard content to the system clipboard
+            apply_to_system_clipboard(&content, &content_type);
             let text = if content_type.starts_with("text/") {
                 String::from_utf8_lossy(&content).to_string()
             } else {
@@ -94,6 +108,26 @@ pub async fn session_event_to_frontend(fe: SessionEvent) -> crate::commands::Fro
             }
         }
         SessionEvent::Error(msg) => crate::commands::FrontendEvent::Error { message: msg },
+    }
+}
+
+/// Writes clipboard content to the OS system clipboard so the user can
+/// paste it directly after receiving from a peer.
+fn apply_to_system_clipboard(content: &[u8], content_type: &str) {
+    if content_type.starts_with("text/") {
+        if let Ok(text) = std::str::from_utf8(content) {
+            if let Ok(mut clipboard) = arboard::Clipboard::new() {
+                let _ = clipboard.set_text(text.to_string());
+            }
+        }
+    } else if content_type == "image/png" {
+        if let Ok(mut clipboard) = arboard::Clipboard::new() {
+            let _ = clipboard.set_image(arboard::ImageData {
+                width: 1,
+                height: 1,
+                bytes: std::borrow::Cow::Owned(content.to_vec()),
+            });
+        }
     }
 }
 

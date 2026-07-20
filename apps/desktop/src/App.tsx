@@ -22,6 +22,7 @@ export default function App() {
     sendClipboard,
     loadClipboardHistory,
     clearClipboardHistory,
+    deleteClipboardEntry,
     sendFile,
     dismissTransfer,
     dismissError,
@@ -158,9 +159,11 @@ export default function App() {
           <ClipboardPanel
             history={state.clipboardHistory}
             isConnected={isConnected}
+            isMonitoring={state.clipboardMonitoring}
             onSend={sendClipboard}
             onLoad={loadClipboardHistory}
             onClear={clearClipboardHistory}
+            onDelete={deleteClipboardEntry}
           />
         )}
 
