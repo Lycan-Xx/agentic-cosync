@@ -1,12 +1,8 @@
-use cosync_core::{
-    ConnectionState, DeviceIdentity, DiscoveryService, HlcTimestamp, SessionEvent,
-    SessionManager, Storage,
-};
+use cosync_core::{ConnectionState, DiscoveryService, SessionManager};
 use ed25519_dalek::pkcs8::EncodePrivateKey as _;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
-use tokio::sync::Mutex;
 use tauri::{AppHandle, Emitter, State};
+use tokio_util::sync::CancellationToken;
 
 use crate::state::{session_event_to_frontend, CosyncState};
 
@@ -668,12 +664,12 @@ pub async fn send_file(
 #[tauri::command]
 pub async fn open_file_in_folder(file_path: String) -> Result<(), String> {
     let path = std::path::Path::new(&file_path);
-    let parent = path
-        .parent()
-        .ok_or("Cannot determine parent directory")?;
 
     #[cfg(target_os = "linux")]
     {
+        let parent = path
+            .parent()
+            .ok_or("Cannot determine parent directory")?;
         std::process::Command::new("xdg-open")
             .arg(parent)
             .spawn()
